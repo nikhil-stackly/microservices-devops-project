@@ -9,7 +9,6 @@ pipeline {
     stages {
         stage('Source Checkout') {
             steps {
-                echo 'Checking out source code'
                 checkout scm
             }
         }
@@ -34,13 +33,11 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 sh '''
+                    set -e
+
                     docker build -t user-service:${BUILD_NUMBER} ./user-service
                     docker build -t product-service:${BUILD_NUMBER} ./product-service
                     docker build -t order-service:${BUILD_NUMBER} ./order-service
-
-                    docker tag user-service:${BUILD_NUMBER} user-service:latest
-                    docker tag product-service:${BUILD_NUMBER} product-service:latest
-                    docker tag order-service:${BUILD_NUMBER} order-service:latest
                 '''
             }
         }
@@ -50,46 +47,48 @@ pipeline {
                 sh '''
                     set -eu
 
-                    docker run -d --name ci-user-${BUILD_NUMBER} \
-                      -p 127.0.0.1:13001:3001 user-service:${BUILD_NUMBER}
+                    cleanup() {
+                        docker rm -f ci-user-${BUILD_NUMBER} ci-product-${BUILD_NUMBER} ci-order-${BUILD_NUMBER} 2>/dev/null || true
+                    }
+                    trap cleanup EXIT
 
-                    docker run -d --name ci-product-${BUILD_NUMBER} \
-                      -p 127.0.0.1:13002:3002 product-service:${BUILD_NUMBER}
+                    docker run -d --name ci-user-${BUILD_NUMBER} -p 127.0.0.1:13001:3001 user-service:${BUILD_NUMBER}
+                    docker run -d --name ci-product-${BUILD_NUMBER} -p 127.0.0.1:13002:3002 product-service:${BUILD_NUMBER}
+                    docker run -d --name ci-order-${BUILD_NUMBER} -p 127.0.0.1:13003:3003 order-service:${BUILD_NUMBER}
 
-                    docker run -d --name ci-order-${BUILD_NUMBER} \
-                      -p 127.0.0.1:13003:3003 order-service:${BUILD_NUMBER}
+                    curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:13001/health
+                    curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:13002/health
+                    curl --fail --silent --show-error --retry 15 --retry-all-errors --retry-delay 2 http://127.0.0.1:13003/health
+                '''
+            }
+        }
 
-                    curl --fail --silent --show-error \
-                      --retry 15 --retry-all-errors --retry-delay 2 \
-                      http://127.0.0.1:13001/health
+        stage('Push Images to AWS ECR') {
+            steps {
+                sh '''
+                    set -e
 
-                    curl --fail --silent --show-error \
-                      --retry 15 --retry-all-errors --retry-delay 2 \
-                      http://127.0.0.1:13002/health
+                    REGISTRY="047106156365.dkr.ecr.us-east-1.amazonaws.com"
 
-                    curl --fail --silent --show-error \
-                      --retry 15 --retry-all-errors --retry-delay 2 \
-                      http://127.0.0.1:13003/health
+                    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$REGISTRY"
+
+                    for service in user-service product-service order-service
+                    do
+                        docker tag ${service}:${BUILD_NUMBER} ${REGISTRY}/${service}:${BUILD_NUMBER}
+                        docker push ${REGISTRY}/${service}:${BUILD_NUMBER}
+                    done
                 '''
             }
         }
     }
 
     post {
-        always {
-            sh '''
-                docker rm -f ci-user-${BUILD_NUMBER} \
-                  ci-product-${BUILD_NUMBER} \
-                  ci-order-${BUILD_NUMBER} 2>/dev/null || true
-            '''
-        }
-
         success {
-            echo 'CI pipeline completed successfully'
+            echo 'CI/CD image build, testing and ECR push completed successfully'
         }
 
         failure {
-            echo 'CI pipeline failed. Check the console output.'
+            echo 'Pipeline failed. Check the Jenkins console output.'
         }
     }
 }
