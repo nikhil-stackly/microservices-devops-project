@@ -60,15 +60,15 @@ pipeline {
                       -p 127.0.0.1:13003:3003 order-service:${BUILD_NUMBER}
 
                     curl --fail --silent --show-error \
-                      --retry 10 --retry-connrefused --retry-delay 2 \
+                      --retry 15 --retry-all-errors --retry-delay 2 \
                       http://127.0.0.1:13001/health
 
                     curl --fail --silent --show-error \
-                      --retry 10 --retry-connrefused --retry-delay 2 \
+                      --retry 15 --retry-all-errors --retry-delay 2 \
                       http://127.0.0.1:13002/health
 
                     curl --fail --silent --show-error \
-                      --retry 10 --retry-connrefused --retry-delay 2 \
+                      --retry 15 --retry-all-errors --retry-delay 2 \
                       http://127.0.0.1:13003/health
                 '''
             }
